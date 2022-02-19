@@ -12,6 +12,7 @@
     "predeploy": "npm run build",
     "deploy": "gh-pages -d build"
   },
+  "proxy": "http://localhost:5006/",
   "author": "",
   "license": "MIT",
   "dependencies": {
