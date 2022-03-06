@@ -2,6 +2,8 @@ const mongo = require("mongoose");
 
 const express = require("express");
 const plaid = require("plaid");
+const twilio = require("twilio");
+
 //app.use(express.json());
 const router = express.Router();
 const passport = require("passport");
@@ -13,6 +15,12 @@ const { Configuration, PlaidApi, PlaidEnvironments } = require("plaid");
 // Load Account and User models
 const Account = require("../../models/Account");
 const User = require("../../models/User");
+const Alerts = require("../../models/Alerts");
+const sgMail = require("@sendgrid/mail");
+sgMail.setApiKey(
+  "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"
+);
+
 const userURI =
   "mongodb+srv://claimyouraid:cya@cluster0.kfgzq.mongodb.net/?retryWrites=true&w=majority";
 const configuration = new Configuration({
@@ -30,7 +38,9 @@ const client = new PlaidApi(configuration);
 var PUBLIC_TOKEN = null;
 var ACCESS_TOKEN = null;
 var ITEM_ID = null;
-
+const accountSid = "ACd092381d0c8cc04422e65e019416b32f";
+const authToken = "ab3422ccc825bd14a4532619894228ef";
+const twclient = require("twilio")(accountSid, authToken);
 // @route GET api/plaid/accounts
 // @desc Get all accounts linked with plaid for a specific user
 // @access Private
@@ -168,13 +178,18 @@ const connectToCluster = async (uri) => {
 // @desc Fetch names from all user linked accounts
 // @access Private
 let mongoClient1, db1, collection1, collection2;
+let alertcoll;
 router.get("/names", async (req, res) => {
   try {
     let mongoClient = await connectToCluster(userURI);
+    db1 = mongoClient.db("Cluster1");
+    alertcoll = db1.collection("alerts");
+
     const db = mongoClient.db("Cluster0");
     const collection = db.collection("users");
     collection1 = db.collection("accounts");
     //collection2 = db.collection("company");
+
     let time = Date.now();
 
     collection
@@ -209,21 +224,151 @@ router.get("/banknames", async (req, res) => {
   }
 });
 
-router.get("/checking", async (req, res) => {
-  let mongoClient2 = await connectToCluster(userURI);
-  const db = mongoClient2.db("Cluster0");
-  const collection = db.collection("users");
+// @route POST api/plaid/add
+// @desc Add all alerts to the database which will be monitored
+// @access Private
+router.post("/addAlert", async (req, res) => {
   try {
-    collection
+    alertcoll.findOne({ accessToken: req.body.accessToken }).then((alert) => {
+      //console.log(typeof req.body.accessToken);
+      alertcoll.remove({ accessToken: req.body.accessToken });
+      //console.log(alert);
+      var reqbd = req.body;
+      if (reqbd.lasttxndone === undefined) reqbd.lasttxndone = 0;
+      const newAlert = new Alerts(reqbd);
+      newAlert.save();
+    });
+  } catch (err) {
+    console.error("Failed to insert alerts in database", err);
+  }
+});
+
+router.get("/makealert", async (req, res) => {
+  try {
+    let mongoClient = await connectToCluster(userURI);
+    db1 = mongoClient.db("Cluster1");
+    alertcoll = db1.collection("alerts");
+    alertcoll
       .find()
       .toArray()
-      .then((users) => {
-        res.json(users);
-      });
+      .then((alert) => {
+        //console.log(alert);
+        // now here we have an array of alerts and we have to perform the twilio things for each of them
+        const now = moment();
+        const today = now.format("YYYY-MM-DD");
+        for (var ind = 0; ind < alert.length; ind++) {
+          const curAccessToken = alert[ind].accessToken;
+          const AMOUNT = alert[ind].amount;
+          const MSG = alert[ind].message;
+          const EMAIL = alert[ind].email;
+          const CELL = alert[ind].cell;
+          const FNAME = alert[ind].fname;
+          const CLIENTNAME = alert[ind].clientname;
+          var TXTBODY = alert[ind].fullTXTmessage;
+          var MLBODY = alert[ind].fullMLmessage;
+          console.log(curAccessToken, alert[ind].lasttxn);
+          //console.log(TXTBODY, MLBODY);
+          // const OFFSET =
+          //   alert[ind].lasttxndone === undefined ? 0 : alert[ind].lasttxndone;
+          //const thirtyDaysAgo = now.subtract(2, "days").format("YYYY-MM-DD");
+          const OFFSET = 0;
+          var NEWOFFSET;
+          const txnreq = {
+            access_token: curAccessToken,
+            start_date: "2022-03-05",
+            end_date: today,
+          };
+          client
+            .transactionsGet(txnreq)
+            .then((response) => {
+              const transactions = response.data.transactions;
+              //console.log(response.data);
+              //console.log(transactions.length);
+              for (
+                var counter = transactions.length - 1 - OFFSET;
+                counter >= 0;
+                counter--
+              ) {
+                var transaction = transactions[counter];
+                if (today == transaction.date) ++NEWOFFSET;
+                //console.log(transaction.amount);
+                TXTBODY = TXTBODY.replace("<<Deposit Date>>", transaction.date);
+                TXTBODY = TXTBODY.replace(
+                  "<<Deposit Amount>>",
+                  transaction.amount
+                );
+                TXTBODY = TXTBODY.replace(
+                  "<<Deposit Description>>",
+                  transaction.name
+                );
+                MLBODY = MLBODY.replace("<<Deposit Date>>", transaction.date);
+                MLBODY = MLBODY.replace(
+                  "<<Deposit Amount>>",
+                  transaction.amount
+                );
+                MLBODY = MLBODY.replace(
+                  "<<Deposit Description>>",
+                  transaction.name
+                );
+                console.log(TXTBODY, MLBODY);
+                console.log(
+                  transaction.name,
+                  transaction.date,
+                  transaction.amount
+                );
+                if (
+                  Math.abs(transaction.amount) >= AMOUNT ||
+                  transaction.name.indexOf(MSG) != -1
+                ) {
+                  if (CELL !== undefined) {
+                    twclient.messages
+                      .create({
+                        body: TXTBODY,
+                        from: "+13515298183",
+                        to: CELL,
+                      })
+                      .then((message) => console.log(message.sid))
+                      .catch((err) => console.log("Twilio error here", err));
+                  }
+                  if (EMAIL !== undefined) {
+                    const msg = {
+                      to: EMAIL, // Change to your recipient
+                      from: "claimyouraids@gmail.com", // Change to your verified sender
+                      subject: "Alert: New transaction recieved",
+                      text: MLBODY,
+                    };
+                    sgMail
+                      .send(msg)
+                      .then((response) => {
+                        console.log(response[0].statusCode);
+                      })
+                      .catch((error) => {
+                        console.error(error.response.body.errors[0]);
+                      });
+                  }
+                }
+              }
+            })
+            .catch((err) => console.log("Transactions fetching error: ", err));
+          // update the alert after sending current alerts
+          var prevAlert = alert[ind];
+          prevAlert.lasttxndone = NEWOFFSET;
+          prevAlert.lasttxn = today;
+          alertcoll.remove({ accessToken: curAccessToken });
 
-    //await res.json(collection.find().toArray());
+          const newAlert = new Alerts(prevAlert);
+          newAlert
+            .save()
+            .then((response) => {
+              console.log("Successfully updated alert");
+            })
+            .catch((error) => {
+              console.log("Error updating alert");
+            });
+        }
+      });
   } catch (err) {
-    console.error("Failed to get names from MongoDB Atlas", err);
+    console.error("Failed to make alerts in database", err);
   }
 });
 module.exports = router;
