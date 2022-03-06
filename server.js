@@ -10,13 +10,14 @@ const app = express();
 
 const path = require("path");
 // Bodyparser middleware
+
+app.use ( express.static("client/build"));
 app.use(
   bodyParser.urlencoded({
     extended: false,
   })
 );
 app.use(bodyParser.json());
-
 // DB Config
 const db = require("./config/keys").mongoURI;
 
@@ -36,7 +37,7 @@ require("./config/passport")(passport);
 app.use("/api/users", users);
 app.use("/api/plaid", plaid);
 
-const port = process.env.PORT || 5006;
+const port = process.env.PORT || 5000;
 app.get("*", (req, res) => {
     res.sendFile(path.join(__dirname, "client", "build", "index.html"));
 });
