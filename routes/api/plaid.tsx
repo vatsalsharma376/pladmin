@@ -38,8 +38,8 @@ const client = new PlaidApi(configuration);
 var PUBLIC_TOKEN = null;
 var ACCESS_TOKEN = null;
 var ITEM_ID = null;
-const accountSid = "ACd092381d0c8cc04422e65e019416b32f";
-const authToken = "ab3422ccc825bd14a4532619894228ef";
+const accountSid = process.env.SID;
+const authToken = process.env.AUTH_TOKEN;
 const twclient = require("twilio")(accountSid, authToken);
 // @route GET api/plaid/accounts
 // @desc Get all accounts linked with plaid for a specific user
