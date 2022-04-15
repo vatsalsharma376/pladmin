@@ -12,7 +12,7 @@ const http = require("http");
 const MongoClient = require("mongodb").MongoClient;
 const { Configuration, PlaidApi, PlaidEnvironments } = require("plaid");
 // import fetch from "node-fetch";
-// Load Account and User models
+// Load Account and User models n
 const Account = require("../../models/Account");
 const User = require("../../models/User");
 const Alerts = require("../../models/Alerts");
